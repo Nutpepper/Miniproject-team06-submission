@@ -40,11 +40,10 @@ export async function sendTeam05Webhook(event: Team05WebhookEvent): Promise<Webh
   }
 
   const targetUrl = webhookUrl.trim();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3000);
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
-
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
@@ -59,8 +58,6 @@ export async function sendTeam05Webhook(event: Team05WebhookEvent): Promise<Webh
       body: JSON.stringify(event),
       signal: controller.signal,
     });
-
-    clearTimeout(timeoutId);
 
     if (!response.ok) {
       console.warn(
@@ -90,5 +87,7 @@ export async function sendTeam05Webhook(event: Team05WebhookEvent): Promise<Webh
       success: false,
       error: errorMessage,
     };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }

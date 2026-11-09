@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getIntegrationSupabaseClient } from '@/lib/supabase/server';
 
 type RouteContext = {
   params: Promise<{ submission_id: string }>;
@@ -194,7 +195,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   // Retrieve existing submission to check ownership, type, and cancellation state
   const { data: existing, error: fetchError } = await userClient
     .from('submissions')
-    .select('submission_id, assignment_id, student_id, submission_type, file_name, file_path, external_link, submitted_at, cancelled_at, status, client_request_id')
+    .select('submission_id, assignment_id, student_id, submission_type, file_name, file_path, external_link, submitted_at, cancelled_at, superseded_at, status, client_request_id')
     .eq('submission_id', submission_id)
     .eq('student_id', user.id)
     .maybeSingle();
@@ -221,7 +222,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 
   // Check if submission is cancelled
-  if (existing.cancelled_at !== null) {
+  if (existing.cancelled_at !== null || existing.superseded_at !== null) {
     return NextResponse.json(
       {
         error: 'Conflict',
@@ -267,15 +268,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
 
     // Execute update
-    const { data: updated, error: updateError } = await userClient
+    let serviceClient;
+    try { serviceClient = await getIntegrationSupabaseClient(); } catch {
+      return NextResponse.json({ error: 'Internal Server Error', message: 'Submission service is unavailable.' }, { status: 500 });
+    }
+    const { data: updated, error: updateError } = await serviceClient
       .from('submissions')
       .update({ external_link: trimmedUrl })
       .eq('submission_id', submission_id)
       .eq('student_id', user.id)
+      .is('cancelled_at', null)
+      .is('superseded_at', null)
       .select('submission_id, assignment_id, student_id, submission_type, file_name, file_path, external_link, submitted_at, cancelled_at, status, client_request_id')
-      .single();
+      .maybeSingle();
 
-    if (updateError || !updated) {
+    if (updateError) {
       console.error('Database update error in PATCH /api/submissions/:submission_id:', updateError?.message);
       return NextResponse.json(
         {
@@ -285,6 +292,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         { status: 500 }
       );
     }
+
+    if (!updated) return NextResponse.json({ error: 'Conflict', message: 'Submission is no longer active.' }, { status: 409 });
 
     return NextResponse.json(updated, { status: 200 });
   }
@@ -325,7 +334,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   // Check if submission exists and verify current cancellation state
   const { data: existing, error: fetchError } = await userClient
     .from('submissions')
-    .select('submission_id, assignment_id, student_id, submission_type, file_name, file_path, external_link, submitted_at, cancelled_at, status, client_request_id')
+    .select('submission_id, assignment_id, student_id, submission_type, file_name, file_path, external_link, submitted_at, cancelled_at, superseded_at, status, client_request_id')
     .eq('submission_id', submission_id)
     .eq('student_id', user.id)
     .maybeSingle();
@@ -352,11 +361,11 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   }
 
   // If already cancelled, return 409 Conflict
-  if (existing.cancelled_at !== null) {
+  if (existing.cancelled_at !== null || existing.superseded_at !== null) {
     return NextResponse.json(
       {
         error: 'Conflict',
-        message: 'Submission is already cancelled.',
+        message: 'Submission is no longer active.',
         submission_id: existing.submission_id,
         cancelled_at: existing.cancelled_at,
       },
@@ -366,15 +375,21 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
   // Soft cancel: update cancelled_at to current timestamp (record remains in DB)
   const cancelledTimestamp = new Date().toISOString();
-  const { data: cancelled, error: updateError } = await userClient
+  let serviceClient;
+  try { serviceClient = await getIntegrationSupabaseClient(); } catch {
+    return NextResponse.json({ error: 'Internal Server Error', message: 'Submission service is unavailable.' }, { status: 500 });
+  }
+  const { data: cancelled, error: updateError } = await serviceClient
     .from('submissions')
     .update({ cancelled_at: cancelledTimestamp })
     .eq('submission_id', submission_id)
     .eq('student_id', user.id)
+    .is('cancelled_at', null)
+    .is('superseded_at', null)
     .select('submission_id, assignment_id, student_id, submission_type, file_name, file_path, external_link, submitted_at, cancelled_at, status, client_request_id')
-    .single();
+    .maybeSingle();
 
-  if (updateError || !cancelled) {
+  if (updateError) {
     console.error('Database cancellation error in DELETE /api/submissions/:submission_id:', updateError?.message);
     return NextResponse.json(
       {
@@ -384,6 +399,8 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       { status: 500 }
     );
   }
+
+  if (!cancelled) return NextResponse.json({ error: 'Conflict', message: 'Submission is no longer active.' }, { status: 409 });
 
   return NextResponse.json(
     {

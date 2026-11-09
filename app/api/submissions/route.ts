@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { fetchTeam05Assignment } from '@/lib/integrations/team05';
 import { sendTeam05Webhook } from '@/lib/integrations/team05WebhookSender';
+import { getIntegrationSupabaseClient } from '@/lib/supabase/server';
 
 interface SubmissionPayload {
   assignment_id?: unknown;
@@ -299,8 +300,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const { data: role, error: roleError } = await userClient.rpc('get_my_role');
+  if (roleError) return NextResponse.json({ error: 'Internal Server Error', message: 'Unable to verify account role.' }, { status: 500 });
+  if (role === 'admin') return NextResponse.json({ error: 'Forbidden', message: 'Student access is required.' }, { status: 403 });
+
   // Derive student_id strictly from the authenticated Supabase user (never from request body)
   const studentId = user.id;
+
+  if (submission_type === 'FILE' && (file_path?.startsWith(`${studentId}/`) !== true || attachments.some((attachment) => {
+    const file = attachment as { file_name: string; file_path: string; file_size?: unknown };
+    return !file.file_name.trim() || !file.file_path.startsWith(`${studentId}/`) ||
+      (file.file_size != null && (typeof file.file_size !== 'number' || !Number.isSafeInteger(file.file_size) || file.file_size < 0));
+  }))) {
+    return NextResponse.json({ error: 'Bad Request', message: 'Invalid attachment metadata or file ownership.' }, { status: 400 });
+  }
 
   // 4. Idempotency Check: prevent duplicate submissions with identical client_request_id
   if (client_request_id) {
@@ -348,38 +361,30 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 6. Server Timestamp & Status Determination:
-  // Generate a single server timestamp used for both status calculation and submitted_at
-  // to ensure absolute consistency and prevent client timestamp manipulation.
-  const serverSubmittedAt = new Date();
-  const dueDate = team05Result.assignment.dueDate;
-  const isLate = serverSubmittedAt.getTime() > dueDate.getTime();
-  const status: 'ON_TIME' | 'LATE' = isLate ? 'LATE' : 'ON_TIME';
+  // Server-only RPC serializes the pair and commits history, submission, and files together.
+  let serviceClient;
+  try {
+    serviceClient = await getIntegrationSupabaseClient();
+  } catch {
+    return NextResponse.json({ error: 'Internal Server Error', message: 'Submission service is unavailable.' }, { status: 500 });
+  }
+  const { data: rpcSubmission, error: insertError } = await serviceClient.rpc('create_submission_atomic', {
+    p_student_id: studentId,
+    p_assignment_id: assignment_id,
+    p_submission_type: submission_type,
+    p_file_name: file_name,
+    p_file_path: file_path,
+    p_external_link: external_link,
+    p_due_at: team05Result.assignment.dueDate.toISOString(),
+    p_client_request_id: client_request_id,
+    p_attachments: attachments,
+  }).single();
 
-  // 7. Database Insert
-  const insertPayload = {
-    assignment_id,
-    student_id: studentId,
-    submission_type,
-    file_name,
-    file_path,
-    external_link,
-    submitted_at: serverSubmittedAt.toISOString(),
-    status,
-    client_request_id,
-  };
-
-  const { data: createdSubmission, error: insertError } = await userClient
-    .from('submissions')
-    .insert(insertPayload)
-    .select('submission_id, assignment_id, student_id, submission_type, file_name, file_path, external_link, submitted_at, cancelled_at, status, client_request_id')
-    .single();
-
-  if (insertError) {
+  if (insertError || !rpcSubmission) {
     // Check if error was due to unique constraint on (student_id, client_request_id)
     if (
-      insertError.code === '23505' ||
-      insertError.message?.includes('submissions_student_client_request_idx')
+      client_request_id && insertError?.code === '23505' &&
+      (insertError.message?.includes('Duplicate submission request') || insertError.message?.includes('submissions_student_client_request_idx'))
     ) {
       const { data: existing } = await userClient
         .from('submissions')
@@ -400,7 +405,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Log internal error safely on server without exposing SQL/secrets to client
-    console.error('Database insertion error in POST /api/submissions:', insertError.message);
+    console.error('Database insertion error in POST /api/submissions:', insertError?.message || 'Missing RPC result');
 
     return NextResponse.json(
       {
@@ -411,22 +416,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (submission_type === 'FILE') {
-    const { error: attachmentError } = await userClient.from('submission_files').insert(
-      attachments.map((attachment, index) => ({
-        submission_id: createdSubmission.submission_id,
-        student_id: studentId,
-        file_name: (attachment as { file_name: string }).file_name.trim(),
-        file_path: (attachment as { file_path: string }).file_path.trim(),
-        file_size: typeof (attachment as { file_size?: unknown }).file_size === 'number' ? (attachment as { file_size: number }).file_size : null,
-        sort_order: index,
-      })),
-    );
-    if (attachmentError) {
-      console.error('Submission attachment insertion error:', attachmentError.message);
-      return NextResponse.json({ error: 'Internal Server Error', message: 'Failed to save submission attachments.' }, { status: 500 });
-    }
-  }
+  const createdSubmission = rpcSubmission as {
+    submission_id: string; assignment_id: string; student_id: string;
+    submission_type: 'FILE' | 'LINK'; file_name: string | null; file_path: string | null;
+    external_link: string | null; submitted_at: string; cancelled_at: string | null;
+    status: 'ON_TIME' | 'LATE'; client_request_id: string | null;
+  };
 
   // 7. Dispatch Webhook Event to Team 05 (non-blocking & fail-safe)
   sendTeam05Webhook({

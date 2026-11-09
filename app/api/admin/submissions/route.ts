@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
     error => ({ data: null, error }),
   );
 
-  const submissionFields = 'submission_id, assignment_id, student_id, submission_type, file_name, file_path, external_link, submitted_at, cancelled_at, status, submission_files(file_id, file_name, file_path, file_size, sort_order)';
+  const submissionFields = 'submission_id, assignment_id, student_id, submission_type, file_name, file_path, external_link, submitted_at, cancelled_at, superseded_at, status, submission_files(file_id, file_name, file_path, file_size, sort_order)';
   const { data: roleScopedData, error } = await authClient
     .from('submissions')
     // Keep this read compatible with existing deployments. The optional grading

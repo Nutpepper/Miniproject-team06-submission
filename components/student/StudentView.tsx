@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase/client';
+import { cancelSubmissionAndRefresh, SubmissionRefreshError } from '@/lib/cancel-submission';
+import { uploadSubmissionFiles } from '@/lib/upload-submission-files';
 import type { StudentScreen, Submission, PendingSubmission, Assignment, Course } from '@/lib/types';
-import {
-  generateId,
-} from '@/lib/formatters';
+import { formatThaiTime } from '@/lib/formatters';
 import { TopNav } from '@/components/shared/TopNav';
 import { StudentCourseList } from './StudentCourseList';
 import { StudentCourseDetail } from './StudentCourseDetail';
@@ -40,9 +40,11 @@ export const StudentView: React.FC<StudentViewProps> = ({
   const router = useRouter();
   const [screen, setScreen] = useState<StudentScreen>({ id: 'courses' });
   const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [submissionHistory, setSubmissionHistory] = useState<Array<{ id: string; assignmentId: string; submittedAt: string; lifecycle: string; link?: string; files: Array<{ name: string; path: string }> }>>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(true);
   const [submissionLoadError, setSubmissionLoadError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submissionInFlight = useRef(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [userEmail, setUserEmail] = useState<string | undefined>(undefined);
   const [userId, setUserId] = useState<string | undefined>(undefined);
@@ -140,6 +142,49 @@ export const StudentView: React.FC<StudentViewProps> = ({
     }
   };
 
+  const loadSubmissions = async (session: Session) => {
+    setLoadingSubmissions(true);
+    setSubmissionLoadError(null);
+    try {
+      const { data, error } = await supabase
+        .from('submissions')
+        .select('*, submission_files(file_id, file_name, file_path, file_size, sort_order)')
+        .eq('student_id', session.user.id)
+        .order('submitted_at', { ascending: false });
+
+      if (error) throw error;
+      const mapped: Submission[] = (data || []).filter((row) => !row.cancelled_at && !row.superseded_at).map((row) => ({
+        id: row.submission_id,
+        assignmentId: row.assignment_id,
+        studentId: row.student_id,
+        studentName: session.user.email || 'Student',
+        studentEmail: session.user.email || '',
+        status: row.status as 'ON_TIME' | 'LATE',
+        submittedAt: new Date(row.submitted_at),
+        type: (row.submission_type?.toLowerCase() as 'file' | 'link') || 'link',
+        fileName: row.file_name || undefined,
+        filePath: row.file_path || undefined,
+        attachments: Array.isArray(row.submission_files) ? row.submission_files.map((file: { file_id: string; file_name: string; file_path: string; file_size: number | null }) => ({ id: file.file_id, fileName: file.file_name, filePath: file.file_path, fileSize: file.file_size || undefined })) : undefined,
+        link: row.external_link || undefined,
+      }));
+      setSubmissions(mapped);
+      setSubmissionHistory((data || []).filter((row) => row.cancelled_at || row.superseded_at).map((row) => ({
+        id: row.submission_id, assignmentId: row.assignment_id, submittedAt: row.submitted_at,
+        lifecycle: row.cancelled_at ? 'ยกเลิกการส่ง' : 'แทนที่ด้วยการส่งใหม่',
+        link: row.external_link || undefined,
+        files: Array.isArray(row.submission_files) && row.submission_files.length
+          ? row.submission_files.map((file: { file_name: string; file_path: string }) => ({ name: file.file_name, path: file.file_path }))
+          : row.file_path ? [{ name: row.file_name || 'ไฟล์ที่ส่ง', path: row.file_path }] : [],
+      })));
+      return mapped;
+    } catch (error) {
+      setSubmissionLoadError('ไม่สามารถโหลดไฟล์ที่ส่งได้ กรุณาโหลดหน้าใหม่');
+      throw error;
+    } finally {
+      setLoadingSubmissions(false);
+    }
+  };
+
   useEffect(() => {
     const initAuth = async () => {
       let session;
@@ -189,33 +234,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
       setLoadingAuth(false);
       void fetchAssignment(session.access_token);
 
-      // Fetch user's existing active submissions from Supabase
-      const { data, error } = await supabase
-        .from('submissions')
-        .select('*, submission_files(file_id, file_name, file_path, file_size, sort_order)')
-        .eq('student_id', session.user.id)
-        .is('cancelled_at', null)
-        .order('submitted_at', { ascending: false });
-
-      if (data && !error) {
-        const mapped: Submission[] = data.map((row) => ({
-          id: row.submission_id,
-          assignmentId: row.assignment_id,
-          studentId: row.student_id,
-          studentName: session.user.email || 'Student',
-          studentEmail: session.user.email || '',
-          status: row.status as 'ON_TIME' | 'LATE',
-          submittedAt: new Date(row.submitted_at),
-          type: (row.submission_type?.toLowerCase() as 'file' | 'link') || 'link',
-          fileName: row.file_name || undefined,
-          filePath: row.file_path || undefined,
-          attachments: Array.isArray(row.submission_files) ? row.submission_files.map((file: { file_id: string; file_name: string; file_path: string; file_size: number | null }) => ({ id: file.file_id, fileName: file.file_name, filePath: file.file_path, fileSize: file.file_size || undefined })) : undefined,
-          link: row.external_link || undefined,
-        }));
-        setSubmissions(mapped);
-      }
-      if (error) setSubmissionLoadError('ไม่สามารถโหลดไฟล์ที่ส่งได้ กรุณาโหลดหน้าใหม่');
-      setLoadingSubmissions(false);
+      await loadSubmissions(session).catch(() => {});
     };
 
     initAuth();
@@ -254,6 +273,17 @@ export const StudentView: React.FC<StudentViewProps> = ({
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
+  const downloadHistoryFile = async (file: { name: string; path: string }) => {
+    const { data, error } = await supabase.storage.from('submissions').download(file.path);
+    if (error || !data) { addToast('error', 'ไม่สามารถดาวน์โหลดไฟล์ในประวัติได้'); return; }
+    const url = URL.createObjectURL(data);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = file.name;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   const getCourse = (id: string): Course => {
     const course = courses.find((item) => item.id === id);
     if (!course) throw new Error('Course not loaded.');
@@ -286,6 +316,8 @@ export const StudentView: React.FC<StudentViewProps> = ({
       return;
     }
 
+    if (submissionInFlight.current) return;
+    submissionInFlight.current = true;
     setSubmitting(true);
     let uploadedFilePath: string | null = null;
     let uploadedFiles: Array<{ file_name: string; file_path: string; file_size: number }> = [];
@@ -308,18 +340,16 @@ export const StudentView: React.FC<StudentViewProps> = ({
 
       // 4. Construct payload strictly using the loaded Team 05 assignment ID
       if (pending.type === 'file') {
-        for (const pendingFile of pending.files) {
-          const safeFileName = pendingFile.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-          const filePath = `${session.user.id}/${crypto.randomUUID()}-${safeFileName}`;
-          const { error: uploadError } = await supabase.storage.from('submissions').upload(filePath, pendingFile.file, {
-            cacheControl: '3600', contentType: pendingFile.file.type || 'application/octet-stream', upsert: false,
+        const result = await uploadSubmissionFiles(pending.files, session.user.id, async (path, file) => {
+          const { error } = await supabase.storage.from('submissions').upload(path, file, {
+            cacheControl: '3600', contentType: file.type || 'application/octet-stream', upsert: false,
           });
-          if (uploadError) {
-            if (uploadedFiles.length) await supabase.storage.from('submissions').remove(uploadedFiles.map((file) => file.file_path));
-            addToast('error', `อัปโหลดไฟล์ไม่สำเร็จ: ${uploadError.message}`);
-            return;
-          }
-          uploadedFiles.push({ file_name: pendingFile.fileName, file_path: filePath, file_size: pendingFile.fileSize });
+          return { error };
+        });
+        uploadedFiles = result.files;
+        if (result.error !== null) {
+          addToast('error', `อัปโหลดไฟล์ไม่สำเร็จ: ${result.error}`);
+          return;
         }
         uploadedFilePath = uploadedFiles[0]?.file_path || null;
       }
@@ -357,36 +387,19 @@ export const StudentView: React.FC<StudentViewProps> = ({
       if (response.status === 201) {
         // 201: show submission success and returned submission_id
         const returnedSubmissionId = responseData.submission_id;
-        const now = new Date(responseData.submitted_at || Date.now());
-        const status = responseData.status === 'LATE' ? 'LATE' : 'ON_TIME';
-
-        const newSub: Submission = {
-          id: returnedSubmissionId || generateId(),
-          assignmentId: assignment.id,
-          studentId: session.user.id,
-          studentName: session.user.email || 'Student',
-          studentEmail: session.user.email || '',
-          status,
-          submittedAt: now,
-          type: pending.type,
-          ...(pending.type === 'file'
-            ? { fileName: uploadedFiles[0]?.file_name, filePath: uploadedFilePath || undefined, fileSize: uploadedFiles[0]?.file_size, attachments: uploadedFiles.map((file) => ({ fileName: file.file_name, filePath: file.file_path, fileSize: file.file_size })) }
-            : { link: responseData.external_link || (pending.type === 'link' ? pending.link : undefined) }),
-        };
-
-        setSubmissions((prev) => {
-          const filtered = prev.filter(
-            (s) =>
-              !(
-                (s.assignmentId === assignment.id || s.assignmentId === assignmentId) &&
-                s.studentId === session.user.id
-              )
-          );
-          return [...filtered, newSub];
-        });
-
-        addToast('success', `ส่งงานสำเร็จ รหัสการส่ง: ${returnedSubmissionId}`);
-        setScreen({ id: 'success', courseId, assignmentId: assignment.id, submissionId: newSub.id });
+        try {
+          const active = await loadSubmissions(session);
+          if (active.some((item) => item.id === returnedSubmissionId)) {
+            addToast('success', `ส่งงานสำเร็จ รหัสการส่ง: ${returnedSubmissionId}`);
+            setScreen({ id: 'success', courseId, assignmentId: assignment.id, submissionId: returnedSubmissionId });
+          } else {
+            addToast('info', 'ส่งงานสำเร็จ แต่มีรายการส่งใหม่กว่าหรือถูกยกเลิกแล้ว');
+            setScreen({ id: 'current-submission', courseId, assignmentId: assignment.id });
+          }
+        } catch {
+          addToast('error', 'ส่งงานแล้ว แต่โหลดสถานะล่าสุดไม่สำเร็จ กรุณาโหลดหน้าใหม่');
+          setScreen({ id: 'current-submission', courseId, assignmentId: assignment.id });
+        }
       } else if (response.status === 400) {
         // 400: show API validation error
         addToast(
@@ -413,54 +426,31 @@ export const StudentView: React.FC<StudentViewProps> = ({
         );
       }
 
-      if (response.status !== 201 && uploadedFiles.length) {
-        await supabase.storage.from('submissions').remove(uploadedFiles.map((file) => file.file_path));
-      }
     } catch (err: unknown) {
-      if (uploadedFiles.length) {
-        await supabase.storage.from('submissions').remove(uploadedFiles.map((file) => file.file_path));
-      }
       addToast('error', 'เกิดข้อผิดพลาดในการเชื่อมต่อ กรุณาลองใหม่');
     } finally {
+      submissionInFlight.current = false;
       setSubmitting(false);
     }
   };
 
   const handleCancel = async (assignmentId: string) => {
-    const sub = submissions.find(
-      (s) =>
-        s.assignmentId === assignmentId &&
-        userId ? s.studentId === userId : false
-    );
-    if (sub) {
-      try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (session) {
-          await fetch(`/api/submissions/${sub.id}`, {
-            method: 'PATCH',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({ cancelled: true }),
-          });
-        }
-      } catch {
-        // ignore
-      }
+    const sub = submissions.find((s) => s.assignmentId === assignmentId && s.studentId === userId);
+    if (!sub) {
+      addToast('error', 'ไม่พบรายการส่งงาน กรุณาโหลดหน้าใหม่');
+      return;
     }
-    setSubmissions((prev) =>
-      prev.filter(
-        (s) =>
-          !(
-            s.assignmentId === assignmentId &&
-            userId ? s.studentId === userId : false
-          )
-      )
-    );
-    addToast('info', 'ยกเลิกการส่งงานแล้ว');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session || session.user.id !== sub.studentId) {
+        throw new Error('ไม่พบการเข้าสู่ระบบ กรุณาเข้าสู่ระบบใหม่');
+      }
+      await cancelSubmissionAndRefresh(sub.id, session.access_token, () => loadSubmissions(session));
+      addToast('info', 'ยกเลิกการส่งงานแล้ว');
+    } catch (error) {
+      addToast('error', error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการยกเลิกการส่งงาน');
+      if (error instanceof SubmissionRefreshError) setSubmissionLoadError(error.message);
+    }
   };
 
   if (loadingAuth || loadingCourses) {
@@ -663,27 +653,30 @@ export const StudentView: React.FC<StudentViewProps> = ({
           const a = getAssignment(screen.assignmentId);
           const sub = getStudentSub(screen.assignmentId);
 
+          if (loadingSubmissions || submissionLoadError) {
+            return <p role="status" className="mx-auto max-w-3xl px-4 py-6 text-sm text-slate-600">{submissionLoadError || 'กำลังโหลดสถานะการส่งงาน...'}</p>;
+          }
+
+          const history = submissionHistory.filter((item) => item.assignmentId === screen.assignmentId);
+          const historyView = history.length > 0 && <section className="mx-auto max-w-3xl px-4 pb-6"><h2 className="font-semibold">ประวัติการส่งงาน</h2><ul className="mt-2 space-y-2 text-sm text-slate-600">{history.map((item) => <li key={item.id}>{formatThaiTime(new Date(item.submittedAt))} — {item.lifecycle} <span className="font-mono text-xs">{item.id}</span>{item.link && <a className="ml-2 text-indigo-600 underline" href={item.link} target="_blank" rel="noopener noreferrer">เปิดลิงก์</a>}{item.files.map((file) => <button className="ml-2 text-indigo-600 underline" key={file.path} type="button" onClick={() => void downloadHistoryFile(file)}>{file.name}</button>)}</li>)}</ul></section>;
           if (!sub) {
-            return (
+            return <>
               <NoActiveSubmission
                 assignment={a}
                 onBack={() => setScreen({ id: 'assignment-detail', courseId: screen.courseId, assignmentId: screen.assignmentId })}
                 onSubmit={() => setScreen({ id: 'submit', courseId: screen.courseId, assignmentId: screen.assignmentId })}
               />
-            );
+              {historyView}</>;
           }
 
           return (
-            <CurrentSubmission
+            <><CurrentSubmission
               assignment={a}
               submission={sub}
               onBack={() => setScreen({ id: 'assignment-detail', courseId: screen.courseId, assignmentId: screen.assignmentId })}
-              onCancelSubmission={() => {
-                handleCancel(screen.assignmentId);
-                setScreen({ id: 'current-submission', courseId: screen.courseId, assignmentId: screen.assignmentId });
-              }}
+              onCancelSubmission={() => { void handleCancel(screen.assignmentId); }}
               onSubmitAgain={() => setScreen({ id: 'submit', courseId: screen.courseId, assignmentId: screen.assignmentId })}
-            />
+            />{historyView}</>
           );
         })()}
         </>}
