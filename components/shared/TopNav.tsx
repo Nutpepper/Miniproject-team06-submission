@@ -12,6 +12,7 @@ interface TopNavProps {
   showSwitchRole?: boolean;
   userEmail?: string;
   onLogout?: () => void;
+  onHome?: () => void;
   onMobileMenu?: () => void;
   onSidebarToggle?: () => void;
   sidebarCollapsed?: boolean;
@@ -23,6 +24,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   showSwitchRole = false,
   userEmail,
   onLogout,
+  onHome,
   onMobileMenu,
   onSidebarToggle,
   sidebarCollapsed = false,
@@ -46,7 +48,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
+    <header className="sticky top-0 z-40 border-b border-slate-200 bg-white">
       <div className={`flex h-14 w-full items-center justify-between gap-2 px-4 sm:h-16 sm:gap-3 sm:px-6 ${onSidebarToggle ? 'lg:pl-0 lg:pr-8' : 'lg:px-8'}`}>
         {/* Brand */}
         <div className={`flex min-w-0 items-center gap-1.5 sm:gap-2 ${onSidebarToggle ? 'lg:gap-0' : ''}`}>
@@ -72,7 +74,7 @@ export const TopNav: React.FC<TopNavProps> = ({
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h16" /></svg>
             </button>
           )}
-          <Link href={homeHref} className="shrink-0 group" aria-label="กลับสู่หน้าหลัก UniLearn">
+          <Link href={homeHref} onClick={onHome} className="shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2" aria-label="กลับสู่หน้าหลัก UniLearn">
             <BrandLogo />
           {/*
           <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center shadow-sm shadow-indigo-200 group-hover:bg-indigo-700 transition-colors">

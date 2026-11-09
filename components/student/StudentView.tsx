@@ -543,7 +543,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
       )}
 
       {/* Navigation - Student */}
-      <TopNav role="student" userEmail={userEmail} onLogout={handleLogout} onMobileMenu={() => setMobileSidebarOpen(true)} onSidebarToggle={() => setSidebarCollapsed((current) => !current)} sidebarCollapsed={sidebarCollapsed} mobileMenuOpen={mobileSidebarOpen} />
+      <TopNav role="student" userEmail={userEmail} onLogout={handleLogout} onHome={() => { setScreen({ id: 'courses' }); setMobileSidebarOpen(false); }} onMobileMenu={() => setMobileSidebarOpen(true)} onSidebarToggle={() => setSidebarCollapsed((current) => !current)} sidebarCollapsed={sidebarCollapsed} mobileMenuOpen={mobileSidebarOpen} />
 
       {/* Main Student Views: Course -> Assignment -> Submission */}
       <div className="flex">

@@ -51,6 +51,7 @@ export async function GET(request: NextRequest) {
     // Keep this read compatible with existing deployments. The optional grading
     // columns are added separately by the grading migration.
     .select(submissionFields)
+    .is('cancelled_at', null)
     .order('submitted_at', { ascending: false });
 
   if (error) {
@@ -68,6 +69,7 @@ export async function GET(request: NextRequest) {
       const { data: integrationData, error: integrationError } = await integrationClient
         .from('submissions')
         .select(submissionFields)
+        .is('cancelled_at', null)
         .order('submitted_at', { ascending: false });
       if (integrationError) {
         console.error('Admin submission fallback query failed:', integrationError.message);
