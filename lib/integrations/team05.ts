@@ -13,6 +13,7 @@ export interface Team05AssignmentResponse {
   id: string;
   cohortId?: string;
   instructorId?: string;
+  instructorName?: string;
   title?: string;
   description?: string;
   criteria?: string;
@@ -31,6 +32,7 @@ export interface Team05AssignmentData {
   criteria?: string;
   cohortId?: string;
   instructorId?: string;
+  instructorName?: string;
   createdAt?: Date;
   dueDate: Date;
   rawDueDate: Team05RawDueDate;
@@ -140,6 +142,7 @@ export async function fetchTeam05Assignments(): Promise<Team05AssignmentData[]> 
           criteria: typeof assignment.criteria === 'string' ? assignment.criteria : '',
           cohortId: typeof assignment.cohortId === 'string' ? assignment.cohortId : undefined,
           instructorId: typeof assignment.instructorId === 'string' ? assignment.instructorId : undefined,
+          instructorName: typeof assignment.instructorName === 'string' ? assignment.instructorName.trim() || undefined : undefined,
           createdAt,
           dueDate,
           rawDueDate: typeof rawDueDate === 'object' && rawDueDate && '_seconds' in rawDueDate
@@ -293,6 +296,7 @@ export async function fetchTeam05Assignment(
         criteria: typeof payload.criteria === 'string' ? payload.criteria : '',
         cohortId: typeof payload.cohortId === 'string' ? payload.cohortId : undefined,
         instructorId: typeof payload.instructorId === 'string' ? payload.instructorId : undefined,
+        instructorName: typeof payload.instructorName === 'string' ? payload.instructorName.trim() || undefined : undefined,
         createdAt: payload.createdAt && typeof payload.createdAt._seconds === 'number'
           ? new Date(payload.createdAt._seconds * 1000 + Math.floor((payload.createdAt._nanoseconds || 0) / 1_000_000))
           : undefined,

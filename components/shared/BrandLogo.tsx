@@ -16,6 +16,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
       alt="UniLearn"
       width={isMedium ? 220 : 130}
       height={isMedium ? 150 : 89}
+      sizes={isMedium ? '141px' : '59px'}
       priority
       fetchPriority="high"
       className={isMedium ? 'h-24 w-auto object-contain' : 'h-10 w-auto object-contain'}

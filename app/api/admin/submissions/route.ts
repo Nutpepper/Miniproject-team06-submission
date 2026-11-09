@@ -99,6 +99,7 @@ export async function GET(request: NextRequest) {
             description: result.assignment.description || '',
             criteria: result.assignment.criteria || '',
             cohortId: result.assignment.cohortId,
+            instructorName: result.assignment.instructorName,
             dueDate: result.assignment.dueDate.toISOString(),
           }] as const
         : [assignmentId, null] as const;
@@ -145,6 +146,7 @@ export async function GET(request: NextRequest) {
         description: assignment.description || '',
         criteria: assignment.criteria || '',
         cohortId: assignment.cohortId,
+        instructorName: assignment.instructorName,
         dueDate: assignment.dueDate.toISOString(),
       }] as const),
       ...assignmentResults,

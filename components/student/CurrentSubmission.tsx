@@ -27,6 +27,12 @@ export const CurrentSubmission: React.FC<CurrentSubmissionProps> = ({
 }) => {
   const [showCancel, setShowCancel] = useState(false);
   const [openingFile, setOpeningFile] = useState(false);
+  const [preview, setPreview] = useState<{ url: string; name: string; kind: 'image' | 'pdf' | 'other' } | null>(null);
+
+  const closePreview = () => {
+    if (preview) URL.revokeObjectURL(preview.url);
+    setPreview(null);
+  };
 
   const openFile = async () => {
     if (!submission.filePath) return;
@@ -40,8 +46,10 @@ export const CurrentSubmission: React.FC<CurrentSubmissionProps> = ({
       return;
     }
     const url = URL.createObjectURL(data);
-    window.open(url, '_blank', 'noopener,noreferrer');
-    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    const fileName = submission.fileName || 'ไฟล์ที่ส่ง';
+    const isPdf = data.type === 'application/pdf' || /\.pdf$/i.test(fileName);
+    const isImage = data.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(fileName);
+    setPreview({ url, name: fileName, kind: isImage ? 'image' : isPdf ? 'pdf' : 'other' });
     setOpeningFile(false);
   };
 
@@ -143,6 +151,27 @@ export const CurrentSubmission: React.FC<CurrentSubmissionProps> = ({
           }}
           onCancel={() => setShowCancel(false)}
         />
+      )}
+
+      {preview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-3" role="dialog" aria-modal="true" aria-label={`ตัวอย่าง ${preview.name}`}>
+          <div className="flex h-[min(90dvh,56rem)] w-full max-w-5xl flex-col rounded-xl bg-white p-3 shadow-xl">
+            <div className="flex min-w-0 items-center justify-between gap-3 pb-3">
+              <p className="min-w-0 truncate text-sm font-semibold text-slate-900">{preview.name}</p>
+              <button type="button" onClick={closePreview} className="min-h-10 shrink-0 rounded-lg px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100">ปิด</button>
+            </div>
+            {preview.kind === 'image' ? (
+              <img src={preview.url} alt={preview.name} className="min-h-0 w-full flex-1 object-contain" />
+            ) : preview.kind === 'pdf' ? (
+              <iframe title={preview.name} src={preview.url} className="min-h-0 w-full flex-1 border-0" />
+            ) : (
+              <div className="flex flex-1 flex-col items-center justify-center rounded-lg bg-slate-50 p-6 text-center">
+                <p className="text-sm text-slate-600">ไฟล์ชนิดนี้ยังไม่รองรับการแสดงตัวอย่างในระบบ</p>
+                <a href={preview.url} download={preview.name} className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">ดาวน์โหลดไฟล์</a>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

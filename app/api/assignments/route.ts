@@ -53,6 +53,7 @@ export async function GET(request: NextRequest) {
         description: assignment.description || '',
         criteria: assignment.criteria || '',
         cohortId: assignment.cohortId,
+        instructorName: assignment.instructorName,
         createdAt: assignment.createdAt?.toISOString(),
         dueDate: assignment.dueDate.toISOString(),
       })),

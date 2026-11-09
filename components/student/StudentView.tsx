@@ -81,9 +81,14 @@ export const StudentView: React.FC<StudentViewProps> = ({
         const errorData = await cohortsResponse.json().catch(() => ({}));
         throw new Error(errorData.message || 'ไม่สามารถโหลดรายวิชาได้ กรุณาลองใหม่');
       }
+      const appearanceResponse = await fetch('/api/course-appearances', options);
+      const appearances: Record<string, string> = appearanceResponse.ok
+        ? await appearanceResponse.json().catch(() => ({}))
+        : {};
       const cohorts: Array<{ id: string; name: string; courseCode?: string; courseName?: string }> = await cohortsResponse.json();
       const courseMap = new Map<string, Course>(cohorts.map((cohort) => [cohort.id, {
         id: cohort.id, code: cohort.courseCode || '', name: cohort.name,
+        bannerColor: appearances[cohort.id],
         instructor: 'ไม่ระบุชื่อผู้สอน', description: '',
       }]));
       setCourses([...courseMap.values()]);
@@ -101,6 +106,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
         description?: string;
         criteria?: string;
         cohortId?: string;
+        instructorName?: string;
         createdAt?: string;
         dueDate: string;
       }> = await res.json();
@@ -111,6 +117,9 @@ export const StudentView: React.FC<StudentViewProps> = ({
           instructor: 'ไม่ระบุชื่อผู้สอน', description: '',
         });
         const course = courseMap.get(courseId)!;
+        if (item.instructorName?.trim()) {
+          course.instructor = item.instructorName.trim();
+        }
         return {
         id: item.id,
         courseId,
