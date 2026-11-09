@@ -1,0 +1,28 @@
+{
+  "name": "prd-team06-pod02-submission",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "dev:student": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "start:student": "next start -p 3000",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.116.0",
+    "next": "^15.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}
